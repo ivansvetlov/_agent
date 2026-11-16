@@ -1,0 +1,30 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# node
+node_modules/
+dist/
+
+# окружение и секреты
+.env
+.env.local
+
+# генерируемое
+out/
+build/
+*.log
+
+# одноразовые скрипты
+scripts/_scratch/
+
+# локальное состояние
+*.db
+*.db-wal
+*.db-shm
+.idea/
+.vscode/

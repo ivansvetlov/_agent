@@ -1,0 +1,11 @@
+{
+  "id": "dsh",
+  "name": "DeepSeek Harness",
+  "enabled": true,
+  "skills_dir": "~/.agents/skills",
+  "subagents_dir": null,
+  "commands_dir": null,
+  "mcp_config": "~/.dsh/profiles/desktop/cordis.yml",
+  "mcp_format": "cordis",
+  "notes": "Скиллы читает из ~/.agents/skills (кросс-рантайм алиас), проверено 16.11.2026: после привязки junction'ов каталог скиллов в сессии обновился. Субагенты и команды DSH задаются пресетами плагинов, не плоскими файлами. MCP-формат cordis не реализован."
+}

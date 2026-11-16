@@ -1,0 +1,15 @@
+# рантайм-каталоги с junction'ами
+skills/
+**/*.bak
+
+# секреты
+.env
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+
+# локальное
+*.log
+.DS_Store

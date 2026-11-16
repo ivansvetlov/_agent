@@ -1,0 +1,11 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "enabled": true,
+  "skills_dir": "~/.agents/skills",
+  "subagents_dir": "~/.config/opencode/agents",
+  "commands_dir": "~/.config/opencode/command",
+  "mcp_config": "~/.config/opencode/opencode.json",
+  "mcp_format": "opencode",
+  "notes": "Живой агент. Конфиг: ~/.config/opencode/opencode.json (shell -> pwsh-utf8 wrapper)."
+}

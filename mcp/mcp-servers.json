@@ -1,0 +1,39 @@
+{
+  "$comment": "РЕКОНСТРУКЦИЯ. Оригинал mcp-servers.json утрачен 15.11.2026. Состав восстановлен по docs/state-of-workspace.md: серверы playwright, chrome-devtools, context7 и deepseek-judge. Команды запуска не сохранились — проверять перед применением.",
+  "version": 1,
+  "servers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "enabled": true,
+      "notes": "Браузерная автоматика. В старом воркспейсе использовался для проверки UI."
+    },
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "enabled": true,
+      "notes": "Подключение к живому Chrome по CDP. Нужен запущенный браузер с --remote-debugging-port."
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "enabled": false,
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      },
+      "notes": "Документация библиотек. Ключ утрачен — перевыпустить и положить в .env, не в git."
+    },
+    "deepseek-judge": {
+      "type": "http",
+      "url": "https://api.deepseek.com/anthropic",
+      "enabled": false,
+      "env": {
+        "DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY}"
+      },
+      "notes": "Судья для пайплайнов Qmeka. Ключ в .env."
+    }
+  }
+}
