@@ -75,26 +75,28 @@ Workspace\
 
 Дальше `scripts\sync-agents.ps1`:
 
-- связывает junction'ами каждый каталог из `skills-src\` в `skills_dir` агента;
+- копирует каждый каталог из `skills-src\` в `skills_dir` агента и ставит маркер `.canon-hash`
+  (по нему потом видно, что копия своя и не разъехалась; junction-режим остался как `-Mode junction`);
 - раскладывает `subagents-src\<name>\agent.md` в `subagents_dir` (с учётом формата агента);
 - копирует `commands\` в `commands_dir`;
 - показывает diff по MCP-конфигу (и применяет только с `-ApplyMcp`).
 
 **Новый агент = новый json + запуск sync.** Никаких правок в skills-src, никаких «вторых копий».
-Если у агента нет каталога скиллов (как у DSH — он подключает их плагинами), в манифесте
-`skills_dir: null` и скиллы ставятся вручную; это фиксируется в `docs\state-of-workspace.md`.
+Если у агента нет каталога скиллов, в манифесте `skills_dir: null` и скиллы ставятся его штатным
+способом (у DSH это тот же `~/.agents/skills`, у остальных уточняется на месте); это фиксируется
+в `docs\state-of-workspace.md`.
 
 ## 5. Скиллы, субагенты, MCP
 
 | Что | Канон | Куда попадает |
 |---|---|---|
-| Скиллы | `skills-src\<name>\SKILL.md` | junctions в `skills_dir` каждого агента |
+| Скиллы | `skills-src\<name>\SKILL.md` | копии в `skills_dir` каждого агента (маркер `.canon-hash`) |
 | Субагенты | `subagents-src\<name>\agent.md` | `subagents_dir` (frontmatter + тело промпта) |
 | MCP | `mcp\mcp-servers.json` | конфиг агента, через `scripts\mcp-sync.ps1` |
 | Команды | `commands\<agent>\<name>.md` | `commands_dir` |
 
-Править **только канон**. `_agent\skills\` — рантайм-каталог junction'ов, править внутри него
-бессмысленно: следующий bootstrap перезапишет.
+Править **только канон**. Копии в каталогах агентов — производные: `doctor` покажет расхождение
+(DRIFT), а `sync-agents.ps1` перезапишет.
 
 ## 6. Новый проект
 

@@ -1,10 +1,17 @@
 #Requires -Version 5.1
 <#
   sync-agents.ps1 - apply _agent canon (skills, subagents, commands) to every agent manifest.
-  Reads _agent\agents\*.json. Idempotent, never deletes a real directory.
+  Reads _agent\agents\*.json. Idempotent, never deletes a real directory it does not own.
+
+  -Mode copy      (default) copy skills into the agent skills dir, keep a .canon-hash marker.
+  -Mode junction  legacy: Windows junctions from agent skills dir to skills-src.
+
   MCP is only reported unless -ApplyMcp is passed.
 #>
-param([switch]$ApplyMcp)
+param(
+  [switch]$ApplyMcp,
+  [ValidateSet('copy', 'junction')][string]$Mode = 'copy'
+)
 
 $ErrorActionPreference = 'Stop'
 $agentRoot = Split-Path -Parent $PSScriptRoot
@@ -27,28 +34,77 @@ function Ensure-Dir([string]$p) {
   if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
 }
 
+function Get-TreeHash([string]$dir) {
+  $files = Get-ChildItem $dir -Recurse -File -Force | Sort-Object FullName
+  $sb = New-Object System.Text.StringBuilder
+  $root = (Resolve-Path $dir).Path.TrimEnd('\')
+  foreach ($f in $files) {
+    $rel = $f.FullName.Substring($root.Length)
+    $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+    [void]$sb.Append($rel.ToLower()).Append('|').Append($h).Append("`n")
+  }
+  $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '') }
+  finally { $sha.Dispose() }
+}
+
+function Is-Reparse([string]$p) {
+  $item = Get-Item $p -Force
+  return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+function Remove-Junction([string]$p, [string]$label) {
+  cmd /c rmdir "`"$p`""
+  if (Test-Path $p) { Write-Host ('  FAILED to remove junction: ' + $label) -ForegroundColor Red; return $false }
+  Write-Host ('  UNLINK ' + $label) -ForegroundColor Green
+  return $true
+}
+
+function Sync-SkillCopy([string]$src, [string]$dst, [string]$label) {
+  $canon = Get-TreeHash $src
+  $marker = Join-Path $dst '.canon-hash'
+  if (Test-Path $dst) {
+    if (Is-Reparse $dst) {
+      if (-not (Remove-Junction $dst $label)) { return 'failed' }
+    } elseif (-not (Test-Path $marker)) {
+      Write-Host ('  SKIP foreign dir (no .canon-hash): ' + $label) -ForegroundColor Yellow
+      return 'foreign'
+    } else {
+      $old = (Get-Content $marker -Raw).Trim()
+      if ($old -eq $canon) { return 'same' }
+      Remove-Item $dst -Recurse -Force
+      Write-Host ('  UPDATE ' + $label) -ForegroundColor Green
+    }
+  }
+  New-Item -ItemType Directory -Path $dst -Force | Out-Null
+  Copy-Item (Join-Path $src '*') $dst -Recurse -Force
+  Set-Content -Path $marker -Value $canon -Encoding ASCII
+  if (-not (Test-Path $marker)) { return 'failed' }
+  return 'copied'
+}
+
 function Link-Skill([string]$link, [string]$target, [string]$label) {
   if (-not (Test-Path (Join-Path $target 'SKILL.md'))) {
-    Write-Host ("  MISSING SOURCE " + $label) -ForegroundColor Red
+    Write-Host ('  MISSING SOURCE ' + $label) -ForegroundColor Red
     return $false
   }
   if (Test-Path $link) {
-    $item = Get-Item $link -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
-    Write-Host ("  SKIP real dir, not junction: " + $label) -ForegroundColor Yellow
+    if (Is-Reparse $link) { return $false }
+    Write-Host ('  SKIP real dir, not junction: ' + $label) -ForegroundColor Yellow
     return $false
   }
   New-Item -ItemType Junction -Path $link -Target $target | Out-Null
-  Write-Host ("  LINK " + $label) -ForegroundColor Green
   return $true
 }
 
 if (-not (Test-Path $agentsDir)) { throw "no agents dir: $agentsDir" }
+Write-Host ('mode: ' + $Mode) -ForegroundColor DarkGray
 
 foreach ($mf in (Get-ChildItem $agentsDir -Filter *.json | Sort-Object Name)) {
   $cfg = Get-Content $mf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
   Write-Host ''
-  Write-Host ("=== " + $cfg.name + " (" + $cfg.id + ")") -ForegroundColor Cyan
+  Write-Host ('=== ' + $cfg.name + ' (' + $cfg.id + ')') -ForegroundColor Cyan
   if (-not $cfg.enabled) { Write-Host '  disabled, skip' -ForegroundColor DarkGray; continue }
 
   $skillsDir = Expand-Home $cfg.skills_dir
@@ -58,11 +114,18 @@ foreach ($mf in (Get-ChildItem $agentsDir -Filter *.json | Sort-Object Name)) {
   if ($skillsDir) {
     Ensure-Dir $skillsDir
     Write-Host ('  skills -> ' + $skillsDir)
-    $n = 0
+    $counts = @{}
     foreach ($s in (Get-ChildItem $skillsSrc -Directory | Sort-Object Name)) {
-      if (Link-Skill -link (Join-Path $skillsDir $s.Name) -target $s.FullName -label $s.Name) { $n++ }
+      $dst = Join-Path $skillsDir $s.Name
+      if ($Mode -eq 'junction') {
+        $r = 'junction'
+        if (Link-Skill -link $dst -target $s.FullName -label $s.Name) { Write-Host ('  LINK ' + $s.Name) -ForegroundColor Green }
+      } else {
+        $r = Sync-SkillCopy -src $s.FullName -dst $dst -label $s.Name
+      }
+      $counts[$r] = 1 + ($counts[$r] -as [int])
     }
-    if ($n -eq 0) { Write-Host '  skills already bound' -ForegroundColor DarkGray }
+    ($counts.GetEnumerator() | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Value }) -join ' '
   } else {
     Write-Host '  skills_dir: null (agent installs skills itself)' -ForegroundColor Yellow
   }
@@ -78,8 +141,7 @@ foreach ($mf in (Get-ChildItem $agentsDir -Filter *.json | Sort-Object Name)) {
       if (Test-Path $dst) {
         $old = Get-Content $dst -Raw -Encoding UTF8
         $new = Get-Content $src -Raw -Encoding UTF8
-        if ($old -eq $new) { $need = $false }
-        else { Copy-Item $dst ($dst + '.bak') -Force }
+        if ($old -eq $new) { $need = $false } else { Copy-Item $dst ($dst + '.bak') -Force }
       }
       if ($need) {
         Copy-Item $src $dst -Force
@@ -103,18 +165,17 @@ Write-Host ''
 Write-Host '=== MCP' -ForegroundColor Cyan
 if (-not (Test-Path $mcpFile)) { Write-Host '  registry missing, skip'; exit 0 }
 $registry = Get-Content $mcpFile -Raw -Encoding UTF8 | ConvertFrom-Json
-$enabled = @{}
+$enabled = [ordered]@{}
 foreach ($p in $registry.servers.PSObject.Properties) {
-  if ($p.Value.enabled) {
-    $enabled[$p.Name] = [ordered]@{ type = $p.Value.type }
-    if ($p.Value.command) { $enabled[$p.Name].command = $p.Value.command }
-    if ($p.Value.args) { $enabled[$p.Name].args = $p.Value.args }
-    if ($p.Value.url) { $enabled[$p.Name].url = $p.Value.url }
-    if ($p.Value.env) { $enabled[$p.Name].environment = $p.Value.env }
-  }
+  if (-not $p.Value.enabled) { continue }
+  $entry = [ordered]@{ type = $p.Value.type }
+  if ($p.Value.command) { $entry.command = $p.Value.command }
+  if ($p.Value.args) { $entry.args = @($p.Value.args) }
+  if ($p.Value.url) { $entry.url = $p.Value.url }
+  if ($p.Value.env) { $entry.environment = $p.Value.env }
+  $enabled[$p.Name] = $entry
 }
-$names = ($enabled.Keys | Sort-Object) -join ', '
-Write-Host ('  enabled servers: ' + $names)
+Write-Host ('  enabled servers: ' + (($enabled.Keys) -join ', '))
 
 if (-not $ApplyMcp) {
   Write-Host '  (dry run: pass -ApplyMcp to write into agent configs)' -ForegroundColor DarkGray

@@ -49,6 +49,20 @@ foreach ($s in $skills) {
 
 Write-Host ''
 Write-Host '[4] agent bindings' -ForegroundColor Cyan
+function Get-TreeHash([string]$dir) {
+  $files = Get-ChildItem $dir -Recurse -File -Force | Sort-Object FullName
+  $sb = New-Object System.Text.StringBuilder
+  $root = (Resolve-Path $dir).Path.TrimEnd('\')
+  foreach ($f in $files) {
+    $rel = $f.FullName.Substring($root.Length)
+    $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+    [void]$sb.Append($rel.ToLower()).Append('|').Append($h).Append("`n")
+  }
+  $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '') }
+  finally { $sha.Dispose() }
+}
 foreach ($mf in (Get-ChildItem (Join-Path $agentRoot 'agents') -Filter *.json | Sort-Object Name)) {
   $cfg = Get-Content $mf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
   if (-not $cfg.enabled) { Write-Host ('  SKIP  ' + $cfg.id + ' (disabled)') -ForegroundColor DarkGray; continue }
@@ -56,15 +70,26 @@ foreach ($mf in (Get-ChildItem (Join-Path $agentRoot 'agents') -Filter *.json | 
   $skillsDir = $cfg.skills_dir
   if ($skillsDir.StartsWith('~')) { $skillsDir = Join-Path $env:USERPROFILE ($skillsDir.Substring(1).TrimStart('\', '/')) }
   if (-not (Test-Path $skillsDir)) { Warn ($cfg.id + ': skills dir missing -> ' + $skillsDir); return }
-  $bound = 0; $broken = 0
+  $copied = 0; $linked = 0; $drift = 0; $missing = 0; $foreign = 0
   foreach ($s in $skills) {
-    $link = Join-Path $skillsDir $s.Name
-    if (-not (Test-Path $link)) { continue }
-    $bound++
-    if (-not (Test-Path (Join-Path $link 'SKILL.md'))) { $broken++ }
+    $dst = Join-Path $skillsDir $s.Name
+    if (-not (Test-Path $dst)) { $missing++; continue }
+    $item = Get-Item $dst -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { $linked++; continue }
+    $marker = Join-Path $dst '.canon-hash'
+    if (-not (Test-Path $marker)) { $foreign++; continue }
+    if ((Get-Content $marker -Raw).Trim() -eq (Get-TreeHash $s.FullName)) { $copied++ } else { $drift++ }
   }
-  if ($broken -eq 0) { Pass ($cfg.id + ': ' + $bound + '/' + $skills.Count + ' skills bound, all resolve') }
-  else { Fail ($cfg.id + ': ' + $broken + ' broken junctions') }
+  $parts = @()
+  if ($copied) { $parts += ($copied -as [string]) + ' copies in sync' }
+  if ($linked) { $parts += ($linked -as [string]) + ' junctions' }
+  if ($drift) { $parts += ($drift -as [string]) + ' DRIFT' }
+  if ($missing) { $parts += ($missing -as [string]) + ' not bound' }
+  if ($foreign) { $parts += ($foreign -as [string]) + ' foreign dirs' }
+  $msg = $cfg.id + ': ' + ($parts -join ', ')
+  if ($drift -gt 0 -or $missing -gt 0) { Fail $msg }
+  elseif ($linked -gt 0 -or $foreign -gt 0) { Warn $msg }
+  else { Pass $msg }
 }
 
 Write-Host ''
